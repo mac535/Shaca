@@ -56,3 +56,7 @@ local.properties
 
 GEO_API_KEY=your_actual_key_here
 COMMUNITY_SECRET_KEY=shaca_admin_123
+
+# Firebase secret files
+android/app/google-services.json
+ios/Runner/GoogleService-Info.plist
