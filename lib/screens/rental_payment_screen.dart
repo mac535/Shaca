@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'payment_success_screen.dart';
 
 class RentalPaymentScreen extends StatefulWidget {
   final String rentalId;
@@ -28,12 +29,17 @@ class _RentalPaymentScreenState extends State<RentalPaymentScreen> {
         // 1. Check tool status inside the lock
         DocumentSnapshot toolSnap = await transaction.get(toolRef);
 
-        if (!toolSnap.exists || toolSnap.get('isAvailable') == false) {
+        if (!toolSnap.exists) {
+          throw Exception("Tool no longer exists.");
+        }
+        
+        bool isAvailable = toolSnap.get('isAvailable') ?? false;
+        if (!isAvailable) {
           throw Exception("Too late! Someone else just secured this tool.");
         }
 
         // 2. If available, lock the tool and update rental
-
+        transaction.update(toolRef, {'isAvailable': false});
         transaction.update(rentalRef, {
           'status': 'Active',
           'paidAt': FieldValue.serverTimestamp(),
@@ -42,27 +48,33 @@ class _RentalPaymentScreenState extends State<RentalPaymentScreen> {
 
       // ✅ Success!
       if (!mounted) return;
-      _showFinishDialog("Success!", "You secured the tool. Go pick it up!");
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => PaymentSuccessScreen(
+            toolName: widget.rentalData['toolName'] ?? 'Tool',
+          ),
+        ),
+      );
 
     } catch (e) {
       // ❌ Failed (Someone else paid first)
       if (!mounted) return;
-      _showFinishDialog("Payment Failed", e.toString().replaceAll("Exception:", ""));
+      _showErrorDialog("Payment Failed", e.toString().replaceAll("Exception:", ""));
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
   }
 
-  void _showFinishDialog(String title, String msg) {
+  void _showErrorDialog(String title, String msg) {
     showDialog(
       context: context,
-      barrierDismissible: false,
       builder: (context) => AlertDialog(
         title: Text(title),
         content: Text(msg),
         actions: [
           TextButton(
-            onPressed: () => Navigator.popUntil(context, (route) => route.isFirst),
+            onPressed: () => Navigator.pop(context),
             child: const Text("OK"),
           )
         ],
@@ -86,12 +98,23 @@ class _RentalPaymentScreenState extends State<RentalPaymentScreen> {
                   // 📸 Showing the photo the owner JUST took
                   ClipRRect(
                     borderRadius: BorderRadius.circular(15),
-                    child: Image.network(
-                      widget.rentalData['liveImageUrl'],
-                      height: 300,
-                      width: double.infinity,
-                      fit: BoxFit.cover,
-                    ),
+                    child: widget.rentalData['liveImageUrl'] != null && widget.rentalData['liveImageUrl'] != '' 
+                      ? Image.network(
+                          widget.rentalData['liveImageUrl'],
+                          height: 300,
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) => Container(
+                            height: 300,
+                            color: Colors.grey[300],
+                            child: const Icon(Icons.broken_image, size: 50),
+                          ),
+                        )
+                      : Container(
+                          height: 300,
+                          color: Colors.grey[300],
+                          child: const Center(child: Text("No image available")),
+                        ),
                   ),
                   const SizedBox(height: 20),
                   const Card(

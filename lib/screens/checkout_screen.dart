@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import '../../services/cart_service.dart';
+import '../services/cart_service.dart';
+import 'payment_success_screen.dart';
 
 class CheckoutScreen extends StatefulWidget {
   const CheckoutScreen({super.key});
@@ -16,9 +17,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   final List<String> _upiApps = ['Google Pay', 'PhonePe', 'Paytm', 'Amazon Pay'];
   bool _isProcessing = false;
 
-  // ----------------------------------------------------------------
-  // 💳 THE SECURE CHECKOUT LOGIC
-  // ----------------------------------------------------------------
   Future<void> _processPayment(CartService cart) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
@@ -29,23 +27,18 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     setState(() => _isProcessing = true);
 
     try {
-      // 1. Simulate a 2-second banking/network delay ⏳
       await Future.delayed(const Duration(seconds: 2));
-
-      // 2. Initialize a Firebase Batch (Executes everything at once securely)
       final batch = FirebaseFirestore.instance.batch();
 
       for (var entry in cart.items.entries) {
         String toolId = entry.key;
         CartItem item = entry.value;
 
-        // Fetch the tool to get the owner's ID (lender)
         DocumentSnapshot toolDoc = await FirebaseFirestore.instance.collection('tools').doc(toolId).get();
         if (!toolDoc.exists) continue;
 
         String lenderId = toolDoc['ownerId'] ?? 'Unknown';
 
-        // A. Create the Rental Receipt
         DocumentReference rentalRef = FirebaseFirestore.instance.collection('rentals').doc();
         batch.set(rentalRef, {
           'toolId': toolId,
@@ -55,29 +48,29 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           'totalCost': item.totalItemPrice,
           'days': item.days,
           'paymentMethod': _selectedUPI,
-          'status': 'Active', // Can be Active, Completed, or Cancelled later
+          'status': 'Active', 
           'createdAt': FieldValue.serverTimestamp(),
+          'startDate': Timestamp.fromDate(DateTime.now()),
+          'endDate': Timestamp.fromDate(DateTime.now().add(Duration(days: item.days - 1))),
         });
 
-        // B. Mark the Tool as Unavailable so no one else can rent it!
         DocumentReference toolUpdateRef = FirebaseFirestore.instance.collection('tools').doc(toolId);
         batch.update(toolUpdateRef, {'isAvailable': false});
       }
 
-      // 3. Commit the batch to the database!
       await batch.commit();
-
-      // 4. Clear the local cart engine
       cart.clearCart();
 
-      // 5. Success! Send them back to the Home Screen
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Payment Successful! Enjoy your tools."), backgroundColor: Colors.green)
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const PaymentSuccessScreen(
+            toolName: "Multiple Tools",
+            isCart: true,
+          ),
+        ),
       );
-
-      // Pops all the way back to the root feed
-      Navigator.popUntil(context, (route) => route.isFirst);
 
     } catch (e) {
       _showError("Payment Failed: $e");
@@ -92,12 +85,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Listen to the cart to get the grand total
     final cart = Provider.of<CartService>(context);
 
-    // If they somehow get here with an empty cart, boot them back
     if (cart.items.isEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => Navigator.pop(context));
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (Navigator.canPop(context)) Navigator.pop(context);
+      });
       return const Scaffold();
     }
 
@@ -111,7 +104,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // --- ORDER SUMMARY ---
             const Text("Order Summary", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
             Container(
@@ -127,11 +119,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     ],
                   ),
                   const Divider(height: 24),
-                  Row(
+                  const Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text("Platform Fee", style: TextStyle(fontSize: 16, color: Colors.grey)),
-                      const Text("₹0", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.green)), // Free for now!
+                      Text("Platform Fee", style: TextStyle(fontSize: 16, color: Colors.grey)),
+                      Text("₹0", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.green)), 
                     ],
                   ),
                   const Divider(height: 24),
@@ -145,10 +137,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 ],
               ),
             ),
-
             const SizedBox(height: 32),
-
-            // --- PAYMENT METHOD ---
             const Text("Select Payment Method", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
             Container(
@@ -163,16 +152,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 )).toList(),
               ),
             ),
-
             const SizedBox(height: 40),
-
-            // --- PAY BUTTON ---
             SizedBox(
               width: double.infinity,
               height: 56,
               child: ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF2C3E50), // Sleek dark blue for payments
+                  backgroundColor: const Color(0xFF2C3E50), 
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
                 onPressed: _isProcessing ? null : () => _processPayment(cart),

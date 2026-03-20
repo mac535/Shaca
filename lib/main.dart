@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:provider/provider.dart'; // 🛠️ ADDED: Provider package
+import 'package:provider/provider.dart'; 
 import 'firebase_options.dart';
 import 'screens/root_screen.dart';
-import 'services/cart_service.dart'; // 🛠️ ADDED: Your new Cart Engine
+import 'services/cart_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,7 +15,6 @@ void main() async {
   runApp(const ShacaApp());
 }
 
-// 🛠️ Converted to StatefulWidget so the app can update when the theme changes
 class ShacaApp extends StatefulWidget {
   const ShacaApp({super.key});
 
@@ -24,10 +23,8 @@ class ShacaApp extends StatefulWidget {
 }
 
 class _ShacaAppState extends State<ShacaApp> {
-  // 🌙 State variable to track the current theme mode
   ThemeMode _themeMode = ThemeMode.light;
 
-  // 💡 Function to toggle between Light and Dark modes
   void _toggleTheme() {
     setState(() {
       _themeMode = _themeMode == ThemeMode.light
@@ -38,7 +35,6 @@ class _ShacaAppState extends State<ShacaApp> {
 
   @override
   Widget build(BuildContext context) {
-    // 🛠️ NEW: Wrap the MaterialApp in a MultiProvider so the Cart Service is available everywhere!
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => CartService()),
@@ -46,11 +42,7 @@ class _ShacaAppState extends State<ShacaApp> {
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
         title: 'Shaca',
-
-        // ✅ Tells the app which theme to show based on the toggle state
         themeMode: _themeMode,
-
-        // ☀️ LIGHT THEME CONFIGURATION (Keeping your exact custom colors)
         theme: ThemeData(
           useMaterial3: true,
           brightness: Brightness.light,
@@ -107,12 +99,10 @@ class _ShacaAppState extends State<ShacaApp> {
             ),
           ),
         ),
-
-        // 🌙 DARK THEME CONFIGURATION
         darkTheme: ThemeData(
           useMaterial3: true,
           brightness: Brightness.dark,
-          scaffoldBackgroundColor: const Color(0xFF121212), // Standard dark background
+          scaffoldBackgroundColor: const Color(0xFF121212),
           primaryColor: const Color(0xFFFF8C00),
           colorScheme: ColorScheme.fromSeed(
             seedColor: const Color(0xFFFF8C00),
@@ -165,8 +155,6 @@ class _ShacaAppState extends State<ShacaApp> {
             ),
           ),
         ),
-
-        // ✅ FIXED: Pass the REAL _toggleTheme function instead of an empty one
         home: RootScreen(onToggleTheme: _toggleTheme),
       ),
     );
