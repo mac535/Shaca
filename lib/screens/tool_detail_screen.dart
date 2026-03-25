@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'rental_request_screen.dart';
 import 'rental_payment_screen.dart';
 import 'package:intl/intl.dart';
+import 'login_screen.dart';
 
 class ToolDetailScreen extends StatefulWidget {
   final String toolId;
@@ -18,7 +19,52 @@ class ToolDetailScreen extends StatefulWidget {
 class _ToolDetailScreenState extends State<ToolDetailScreen> {
   bool _isSaved = false;
 
-  // 🛑 DELETE CONFIRMATION DIALOG
+  @override
+  void initState() {
+    super.initState();
+    _checkIfSaved();
+  }
+
+  Future<void> _checkIfSaved() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+    if (userDoc.exists) {
+      List<dynamic> savedTools = (userDoc.data() as Map<String, dynamic>)['savedTools'] ?? [];
+      if (mounted) {
+        setState(() {
+          _isSaved = savedTools.contains(widget.toolId);
+        });
+      }
+    }
+  }
+
+  Future<void> _toggleSavedItem() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Log in to save tools!")));
+      return;
+    }
+
+    final userRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
+
+    setState(() => _isSaved = !_isSaved);
+
+    try {
+      if (_isSaved) {
+        await userRef.update({'savedTools': FieldValue.arrayUnion([widget.toolId])});
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Added to Saved Items')));
+      } else {
+        await userRef.update({'savedTools': FieldValue.arrayRemove([widget.toolId])});
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Removed from Saved')));
+      }
+    } catch (e) {
+      setState(() => _isSaved = !_isSaved);
+      debugPrint("Error saving tool: $e");
+    }
+  }
+
   void _showDeleteConfirmation(BuildContext context) {
     showDialog(
       context: context,
@@ -37,10 +83,8 @@ class _ToolDetailScreenState extends State<ToolDetailScreen> {
     );
   }
 
-  // 🧹 THE FIRESTORE DELETE FUNCTION
   Future<void> _deleteTool(BuildContext context) async {
     try {
-      // 1. Check if there are active rentals first to prevent "ghost" bookings
       final activeRentals = await FirebaseFirestore.instance
           .collection('rentals')
           .where('toolId', isEqualTo: widget.toolId)
@@ -48,7 +92,7 @@ class _ToolDetailScreenState extends State<ToolDetailScreen> {
           .get();
 
       if (activeRentals.docs.isNotEmpty) {
-        Navigator.pop(context); // Close dialog
+        Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text("Cannot delete! You have active rentals for this tool."),
@@ -58,12 +102,11 @@ class _ToolDetailScreenState extends State<ToolDetailScreen> {
         return;
       }
 
-      // 2. No active rentals? Proceed to delete
       await FirebaseFirestore.instance.collection('tools').doc(widget.toolId).delete();
 
       if (!mounted) return;
-      Navigator.pop(context); // Close dialog
-      Navigator.pop(context); // Go back to Home Screen
+      Navigator.pop(context);
+      Navigator.pop(context);
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Ad deleted successfully.")),
@@ -78,6 +121,7 @@ class _ToolDetailScreenState extends State<ToolDetailScreen> {
   @override
   Widget build(BuildContext context) {
     double price = (widget.toolData['pricePerDay'] ?? 0.0).toDouble();
+    bool isAvailable = widget.toolData['isAvailable'] ?? true;
 
     final currentUser = FirebaseAuth.instance.currentUser;
     final bool isOwner = currentUser != null && widget.toolData['ownerId'] == currentUser.uid;
@@ -96,8 +140,9 @@ class _ToolDetailScreenState extends State<ToolDetailScreen> {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
               onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("Please log in to rent tools!"), backgroundColor: Colors.orange)
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const LoginScreen()),
                 );
               },
               child: const Text('Log in to Rent', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
@@ -110,6 +155,15 @@ class _ToolDetailScreenState extends State<ToolDetailScreen> {
               ),
               onPressed: null,
               child: const Text('This is your tool', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+            )
+                : !isAvailable
+                ? ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red[300],
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: null,
+              child: const Text('Temporarily Unavailable', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
             )
                 : StreamBuilder<QuerySnapshot>(
               stream: FirebaseFirestore.instance
@@ -176,7 +230,7 @@ class _ToolDetailScreenState extends State<ToolDetailScreen> {
                       ),
                     );
                   },
-                  child: const Text('Rent for Another Date', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+                  child: const Text('Request to Rent', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
                 );
               },
             ),
@@ -200,7 +254,6 @@ class _ToolDetailScreenState extends State<ToolDetailScreen> {
               ),
             ),
             actions: [
-              // 🗑️ DELETE BUTTON (Only for the Owner)
               if (isOwner)
                 Padding(
                   padding: const EdgeInsets.only(right: 8),
@@ -222,12 +275,7 @@ class _ToolDetailScreenState extends State<ToolDetailScreen> {
                       _isSaved ? Icons.favorite : Icons.favorite_border,
                       color: _isSaved ? Colors.red : Colors.grey[700],
                     ),
-                    onPressed: () {
-                      setState(() => _isSaved = !_isSaved);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(_isSaved ? 'Added to Saved Items' : 'Removed from Saved'), behavior: SnackBarBehavior.floating),
-                      );
-                    },
+                    onPressed: _toggleSavedItem,
                   ),
                 ),
               ),
@@ -261,6 +309,29 @@ class _ToolDetailScreenState extends State<ToolDetailScreen> {
                     ],
                   ),
 
+                  if (!isAvailable)
+                    Container(
+                      margin: const EdgeInsets.only(top: 16),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.red.withOpacity(0.3)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.block, color: Colors.red, size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              "The owner has temporarily paused rentals for this tool.",
+                              style: TextStyle(color: Colors.red[800], fontWeight: FontWeight.bold, fontSize: 13),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
                   const SizedBox(height: 32),
                   const Text('Description', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
@@ -270,7 +341,71 @@ class _ToolDetailScreenState extends State<ToolDetailScreen> {
                     style: TextStyle(color: Colors.grey, fontSize: 16, height: 1.5),
                   ),
 
-                  if (currentUser != null) ...[
+                  const SizedBox(height: 32),
+                  const Text('Owner Profile', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 12),
+
+                  // ==========================================
+                  // ⭐ OWNER'S TRUST SCORE UI
+                  // ==========================================
+                  FutureBuilder<DocumentSnapshot>(
+                    future: FirebaseFirestore.instance.collection('users').doc(widget.toolData['ownerId']).get(),
+                    builder: (context, snapshot) {
+                      if (!snapshot.hasData) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+
+                      var ownerData = snapshot.data!.data() as Map<String, dynamic>?;
+                      double trustScore = (ownerData != null && ownerData.containsKey('trustScore'))
+                          ? (ownerData['trustScore'] as num).toDouble()
+                          : 5.0; // Default to 5.0
+                      int reviews = (ownerData != null && ownerData.containsKey('reviewCount'))
+                          ? (ownerData['reviewCount'] as num).toInt()
+                          : 0;
+
+                      return Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[50],
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.grey[200]!),
+                        ),
+                        child: Row(
+                          children: [
+                            CircleAvatar(
+                              radius: 25,
+                              backgroundColor: Colors.grey[300],
+                              child: const Icon(Icons.person, color: Colors.white, size: 30),
+                            ),
+                            const SizedBox(width: 16),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                    ownerData?['name'] ?? "Community Member",
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)
+                                ),
+                                const SizedBox(height: 4),
+                                Row(
+                                  children: [
+                                    const Icon(Icons.star, color: Colors.amber, size: 18),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      "$trustScore ($reviews reviews)",
+                                      style: TextStyle(color: Colors.grey[700], fontWeight: FontWeight.bold),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                  // ==========================================
+
+                  if (currentUser != null && !isOwner) ...[
                     const SizedBox(height: 32),
                     const Text('Your Bookings', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 12),

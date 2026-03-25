@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:intl/intl.dart';
+import 'handshake_screen.dart'; // 🚀 IMPORT THE HANDSHAKE SCREEN!
 
 class OwnerDashboardScreen extends StatefulWidget {
   const OwnerDashboardScreen({super.key});
@@ -70,32 +71,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen> with Single
     }
   }
 
-  // ✅ 3. RETURN LOGIC (Completes the cycle)
-  Future<void> _markAsReturned(String rentalId, String toolId) async {
-    try {
-      final batch = FirebaseFirestore.instance.batch();
-
-      // Mark rental as completed
-      batch.update(FirebaseFirestore.instance.collection('rentals').doc(rentalId), {
-        'status': 'Completed',
-        'returnedAt': FieldValue.serverTimestamp(),
-      });
-
-      // Make tool available again!
-      batch.update(FirebaseFirestore.instance.collection('tools').doc(toolId), {
-        'isAvailable': true,
-      });
-
-      await batch.commit();
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Tool returned! It is now available for others."), backgroundColor: Colors.green),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));
-    }
-  }
+  // 🚀 WE DELETED THE OLD '_markAsReturned' BECAUSE THE HANDSHAKE SCREEN DOES IT SECURELY NOW!
 
   @override
   Widget build(BuildContext context) {
@@ -112,30 +88,38 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen> with Single
           unselectedLabelColor: Colors.grey,
           tabs: const [
             Tab(text: "New Requests"),
-            Tab(text: "Active Rentals"),
+            Tab(text: "Handovers & Active"), // 🚀 Updated tab name
           ],
         ),
       ),
       body: TabBarView(
         controller: _tabController,
         children: [
-          _buildRequestList(user.uid, 'pending_verification'),
-          _buildRequestList(user.uid, 'Active'),
+          // Tab 1: Just New Requests
+          _buildRequestList(user.uid, ['pending_verification']),
+          // Tab 2: Waiting for pickup OR currently rented out
+          _buildRequestList(user.uid, ['paid_pending_pickup', 'Active']),
         ],
       ),
     );
   }
 
-  Widget _buildRequestList(String userId, String status) {
+  // 🚀 Modified to accept a LIST of statuses
+  Widget _buildRequestList(String userId, List<String> statuses) {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('rentals')
           .where('lenderId', isEqualTo: userId)
-          .where('status', isEqualTo: status)
+          .where('status', whereIn: statuses) // 🚀 Fetch multiple states at once
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator(color: Color(0xFFFF8C00)));
+        }
+
+        if (snapshot.hasError) {
+          debugPrint("Dashboard Error: ${snapshot.error}");
+          return const Center(child: Text("An error occurred loading your dashboard."));
         }
 
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
@@ -145,7 +129,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen> with Single
               children: [
                 Icon(Icons.inbox_outlined, size: 80, color: Colors.grey[400]),
                 const SizedBox(height: 16),
-                Text("No $status items right now.", style: const TextStyle(fontSize: 18, color: Colors.grey)),
+                const Text("No items right now.", style: TextStyle(fontSize: 18, color: Colors.grey)),
               ],
             ),
           );
@@ -160,12 +144,25 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen> with Single
             var request = requests[index].data() as Map<String, dynamic>;
             String rentalId = requests[index].id;
             String toolId = request['toolId'];
+            String currentStatus = request['status'] ?? ''; // Get the exact status
 
             DateTime? startDate = request['startDate'] != null ? (request['startDate'] as Timestamp).toDate() : null;
             int days = request['days'] ?? 1;
-            double amount = (request['totalAmount'] ?? request['totalCost'] ?? 0).toDouble();
+            double amount = (request['totalPaid'] ?? request['totalCost'] ?? 0).toDouble();
 
             bool isUploading = _uploadingRentalId == rentalId;
+
+            // Determine badge text and color based on exact status
+            String badgeText = "Action Required";
+            Color badgeColor = Colors.orange;
+
+            if (currentStatus == 'Active') {
+              badgeText = "In Progress";
+              badgeColor = Colors.green;
+            } else if (currentStatus == 'paid_pending_pickup') {
+              badgeText = "Ready for Handover";
+              badgeColor = Colors.blue;
+            }
 
             return Card(
               elevation: 3,
@@ -179,20 +176,17 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen> with Single
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(request['toolName'] ?? 'Tool', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF2C3E50))),
+                        Expanded(child: Text(request['toolName'] ?? 'Tool', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF2C3E50)), overflow: TextOverflow.ellipsis)),
+                        const SizedBox(width: 8),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
-                            color: status == 'Active' ? Colors.green[100] : Colors.orange[100],
+                            color: badgeColor.withOpacity(0.1),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Text(
-                            status == 'Active' ? "In Progress" : "Action Required",
-                            style: TextStyle(
-                              color: status == 'Active' ? Colors.green : Colors.orange,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12,
-                            ),
+                            badgeText,
+                            style: TextStyle(color: badgeColor, fontWeight: FontWeight.bold, fontSize: 12),
                           ),
                         )
                       ],
@@ -206,8 +200,8 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen> with Single
                     Row(children: [const Icon(Icons.payments, size: 16, color: Colors.green), const SizedBox(width: 8), Text("Earnings: ₹${amount.toStringAsFixed(0)}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green)) ]),
                     const SizedBox(height: 20),
 
-                    // 🔘 ACTION BUTTONS
-                    if (status == 'pending_verification')
+                    // 🔘 ACTION BUTTONS: Pending Verification
+                    if (currentStatus == 'pending_verification')
                       Row(
                         children: [
                           Expanded(
@@ -245,7 +239,33 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen> with Single
                         ],
                       ),
 
-                    if (status == 'Active')
+                    // 🚀 NEW BUTTON: Handover to Borrower
+                    if (currentStatus == 'paid_pending_pickup')
+                      SizedBox(
+                        width: double.infinity,
+                        height: 48,
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          onPressed: () {
+                            Navigator.push(context, MaterialPageRoute(
+                                builder: (_) => HandshakeScreen(
+                                  rentalId: rentalId,
+                                  rentalData: request,
+                                  isLender: true, // 🚀 THEY ARE THE OWNER
+                                  actionType: 'pickup',
+                                )
+                            ));
+                          },
+                          icon: const Icon(Icons.qr_code_scanner, color: Colors.white),
+                          label: const Text("Scan Borrower's Code", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+
+                    // 🚀 NEW BUTTON: Accept Return
+                    if (currentStatus == 'Active')
                       SizedBox(
                         width: double.infinity,
                         height: 48,
@@ -254,9 +274,18 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen> with Single
                             backgroundColor: Colors.green,
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                           ),
-                          onPressed: () => _markAsReturned(rentalId, toolId),
-                          icon: const Icon(Icons.check_circle_outline, color: Colors.white),
-                          label: const Text("Mark as Returned", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                          onPressed: () {
+                            Navigator.push(context, MaterialPageRoute(
+                                builder: (_) => HandshakeScreen(
+                                  rentalId: rentalId,
+                                  rentalData: request,
+                                  isLender: true, // 🚀 THEY ARE THE OWNER
+                                  actionType: 'return',
+                                )
+                            ));
+                          },
+                          icon: const Icon(Icons.assignment_return, color: Colors.white),
+                          label: const Text("Accept Return (Scan Code)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                         ),
                       ),
                   ],

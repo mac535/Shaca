@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:provider/provider.dart'; 
+import 'package:provider/provider.dart';
 import 'firebase_options.dart';
 import 'screens/root_screen.dart';
 import 'services/cart_service.dart';
+import 'screens/splash_screen.dart'; // 🚀 Import the Splash Screen
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -155,7 +156,10 @@ class _ShacaAppState extends State<ShacaApp> {
             ),
           ),
         ),
-        home: RootScreen(onToggleTheme: _toggleTheme),
+        // 🚀 THE FIX IS RIGHT HERE:
+        home: SplashScreen(
+          nextScreen: RootScreen(onToggleTheme: _toggleTheme),
+        ),
       ),
     );
   }

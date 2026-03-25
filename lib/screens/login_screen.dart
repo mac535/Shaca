@@ -6,7 +6,8 @@ import 'forgot_password_screen.dart';
 import 'register_screen.dart';
 import 'home_screen.dart';
 import 'otp_screen.dart';
-import 'root_screen.dart'; // 🛠️ Add this to the top imports
+import 'root_screen.dart';
+import 'admin_login_screen.dart'; // 🚀 IMPORT YOUR NEW ADMIN LOGIN SCREEN!
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -33,12 +34,11 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   }
 
   // ----------------------------------------------------------------
-  // 📧 EMAIL LOGIN LOGIC (SPLIT ERRORS)
+  // 📧 EMAIL LOGIN LOGIC
   // ----------------------------------------------------------------
   void _loginWithEmail() async {
     setState(() => _isLoading = true);
     try {
-      // Attempt Login
       await _authService.loginWithEmail(
           _emailController.text.trim(),
           _passwordController.text.trim()
@@ -46,40 +46,36 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
 
       if (!mounted) return;
 
-      // 🛠️ FIX: Explicitly target the absolute base route ('/') of the app!
       RootScreen.tabNotifier.value = 0;
       Navigator.popUntil(context, ModalRoute.withName('/'));
 
-    } catch (e) {
-      String errorMsg = e.toString();
+    } on FirebaseAuthException catch (e) {
+      debugPrint("🔥 EMAIL LOGIN ERROR CODE: ${e.code}");
+      debugPrint("🔥 EMAIL LOGIN ERROR MSG: ${e.message}");
 
-      // 1. EMAIL DOES NOT EXIST
-      if (errorMsg.contains("user-not-found")) {
+      if (e.code == 'user-not-found') {
         _showRegisterDialog("We couldn't find an account with this email. Would you like to create one?");
-      }
-      // 2. WRONG PASSWORD
-      else if (errorMsg.contains("wrong-password")) {
+      } else if (e.code == 'wrong-password') {
         _showCustomSnackBar(message: "Incorrect password. Please try again.", isError: true);
-      }
-      // 3. BAD FORMAT
-      else if (errorMsg.contains("invalid-email")) {
+      } else if (e.code == 'invalid-email') {
         _showCustomSnackBar(message: "Please enter a valid email address.", isError: true);
-      }
-      // 4. FIREBASE SECURITY FALLBACK
-      else if (errorMsg.contains("invalid-credential")) {
+      } else if (e.code == 'invalid-credential') {
         _showCustomSnackBar(message: "Incorrect email or password.", isError: true);
+      } else if (e.code == 'network-request-failed') {
+        _showCustomSnackBar(message: "No internet. Please check your Wi-Fi/Data.", isError: true);
+      } else {
+        _showCustomSnackBar(message: e.message ?? "An unknown error occurred.", isError: true);
       }
-      // 5. ANY OTHER ERROR
-      else {
-        _showCustomSnackBar(message: errorMsg.replaceAll("Exception: ", ""), isError: true);
-      }
+    } catch (e) {
+      debugPrint("🔥 GENERAL EMAIL ERROR: $e");
+      _showCustomSnackBar(message: "An unexpected error occurred.", isError: true);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
   // ----------------------------------------------------------------
-  // 📱 PHONE LOGIN LOGIC (SMART UPGRADE)
+  // 📱 PHONE LOGIN LOGIC
   // ----------------------------------------------------------------
   void _loginWithPhone() async {
     String phone = _phoneController.text.trim();
@@ -92,7 +88,6 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     String fullPhoneNumber = "+91$phone";
 
     try {
-      // 1. SMART CHECK: Look for this phone number in the Database FIRST
       var userQuery = await FirebaseFirestore.instance
           .collection('users')
           .where('phone', isEqualTo: fullPhoneNumber)
@@ -105,7 +100,6 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         return;
       }
 
-      // 2. User exists! Now we send the OTP.
       _authService.sendOtp(
         phoneNumber: fullPhoneNumber,
         codeSent: (verificationId, resendToken) {
@@ -123,21 +117,38 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
             ),
           );
         },
-        verificationFailed: (error) {
+        verificationFailed: (FirebaseAuthException error) {
           if (!mounted) return;
           setState(() => _isLoading = false);
+
+          debugPrint("🔥 OTP VERIFICATION FAILED: ${error.code} - ${error.message}");
 
           String errorMsg = "Verification failed. Please try again.";
           if (error.message != null && error.message!.contains('BILLING')) {
             errorMsg = "Server Config: Enable Blaze Plan in Firebase.";
+          } else if (error.code == 'network-request-failed') {
+            errorMsg = "No internet connection. Please check your network.";
+          } else if (error.code == 'too-many-requests') {
+            errorMsg = "Too many attempts. Please try again later.";
           }
           _showCustomSnackBar(message: errorMsg, isError: true);
         },
       );
-    } catch (e) {
+    } on FirebaseException catch (e) {
+      debugPrint("🔥 FIRESTORE QUERY ERROR: ${e.code} - ${e.message}");
       if (!mounted) return;
       setState(() => _isLoading = false);
-      _showCustomSnackBar(message: "Connection error. Please try again.", isError: true);
+
+      if (e.code == 'unavailable') {
+        _showCustomSnackBar(message: "Database offline. Check your internet.", isError: true);
+      } else {
+        _showCustomSnackBar(message: "Database error: ${e.message}", isError: true);
+      }
+    } catch (e) {
+      debugPrint("🔥 UNKNOWN PHONE LOGIN ERROR: $e");
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      _showCustomSnackBar(message: "Something went wrong. Please try again.", isError: true);
     }
   }
 
@@ -203,7 +214,6 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // 🛠️ The ResizeToAvoidBottomInset ensures the screen shrinks above the keyboard
       resizeToAvoidBottomInset: true,
       body: SafeArea(
         child: Column(
@@ -231,7 +241,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                 children: [
                   // --- TAB 1: EMAIL ---
                   SingleChildScrollView(
-                    padding: const EdgeInsets.symmetric(horizontal: 24.0), // 🛠️ Moved padding here
+                    padding: const EdgeInsets.symmetric(horizontal: 24.0),
                     child: Column(
                       children: [
                         TextField(
@@ -269,14 +279,14 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                           onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const RegisterScreen())),
                           child: const Text("Don't have an account? Sign Up", style: TextStyle(color: Color(0xFF2C3E50))),
                         ),
-                        const SizedBox(height: 40), // 🛠️ Extra space at the bottom for keyboard comfort
+                        const SizedBox(height: 40),
                       ],
                     ),
                   ),
 
                   // --- TAB 2: PHONE ---
                   SingleChildScrollView(
-                    padding: const EdgeInsets.symmetric(horizontal: 24.0), // 🛠️ Moved padding here
+                    padding: const EdgeInsets.symmetric(horizontal: 24.0),
                     child: Column(
                       children: [
                         const SizedBox(height: 20),
@@ -305,13 +315,27 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                             child: _isLoading ? const CircularProgressIndicator(color: Colors.white) : const Text("Get OTP"),
                           ),
                         ),
-                        const SizedBox(height: 40), // 🛠️ Extra space at the bottom
+                        const SizedBox(height: 40),
                       ],
                     ),
                   ),
                 ],
               ),
             ),
+
+            // =========================================================
+            // 🛡️ THE SECRET ADMIN ACCESS BUTTON
+            // =========================================================
+            TextButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const AdminLoginScreen()),
+                );
+              },
+              child: const Text("Admin Access", style: TextStyle(color: Colors.grey, fontSize: 12)),
+            ),
+            const SizedBox(height: 10), // A little padding at the very bottom
           ],
         ),
       ),

@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart'; // 🛠️ Added Storage
+import 'package:firebase_storage/firebase_storage.dart';
 import 'login_screen.dart';
 import 'join_node_screen.dart';
 
@@ -21,23 +21,32 @@ class _AddItemScreenState extends State<AddItemScreen> {
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _priceController = TextEditingController();
 
-  // 🛠️ NEW: Category selection to match your Home Screen!
+  // 🚀 NEW CONTROLLERS
+  final TextEditingController _descriptionController = TextEditingController();
+  final TextEditingController _depositController = TextEditingController();
+
   String _selectedCategory = 'Drills';
   final List<String> _categories = ['Drills', 'Ladders', 'Gardening', 'Electrical'];
 
-  bool _isUploading = false; // Prevents double-clicks
+  // 🚀 NEW: Pricing Model
+  String _selectedPricing = 'Per Day';
+  final List<String> _pricingOptions = ['Per Day', 'Per Hour'];
+
+  bool _isUploading = false;
 
   @override
   void dispose() {
     _nameController.dispose();
     _priceController.dispose();
+    _descriptionController.dispose();
+    _depositController.dispose();
     super.dispose();
   }
 
   Future<void> _pickImage() async {
     final XFile? pickedFile = await _picker.pickImage(
       source: ImageSource.gallery,
-      imageQuality: 70, // Slightly compressed for faster uploads
+      imageQuality: 70,
     );
 
     if (pickedFile != null) {
@@ -48,7 +57,6 @@ class _AddItemScreenState extends State<AddItemScreen> {
   }
 
   void _submitTool() async {
-    // 1. Check Auth & Fields
     final currentUser = FirebaseAuth.instance.currentUser;
     if (currentUser == null) {
       _showLoginDialog();
@@ -57,9 +65,11 @@ class _AddItemScreenState extends State<AddItemScreen> {
 
     final toolName = _nameController.text.trim();
     final toolPrice = _priceController.text.trim();
+    final toolDesc = _descriptionController.text.trim();
+    final toolDeposit = _depositController.text.trim();
 
-    if (toolName.isEmpty || toolPrice.isEmpty) {
-      _showError('Please enter both the Tool Name and Price!');
+    if (toolName.isEmpty || toolPrice.isEmpty || toolDesc.isEmpty || toolDeposit.isEmpty) {
+      _showError('Please fill in all the details!');
       return;
     }
 
@@ -71,7 +81,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
     setState(() => _isUploading = true);
 
     try {
-      // 2. 🔒 Check Society Verification
+      // 🔒 Check Society Verification
       DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(currentUser.uid).get();
 
       bool isVerified = false;
@@ -88,23 +98,25 @@ class _AddItemScreenState extends State<AddItemScreen> {
         return;
       }
 
-      // 3. ☁️ Upload Image to Firebase Storage
-      // Create a unique file name using the current timestamp
+      // ☁️ Upload Image
       String fileName = 'tools/${DateTime.now().millisecondsSinceEpoch}_${currentUser.uid}.jpg';
       Reference storageRef = FirebaseStorage.instance.ref().child(fileName);
 
       UploadTask uploadTask = storageRef.putFile(_selectedImage!);
       TaskSnapshot snapshot = await uploadTask;
-      String downloadUrl = await snapshot.ref.getDownloadURL(); // Get the secure web link!
+      String downloadUrl = await snapshot.ref.getDownloadURL();
 
-      // 4. 📝 Save Tool Data to Firestore
+      // 📝 Save Tool Data to Firestore
       await FirebaseFirestore.instance.collection('tools').add({
         'name': toolName,
-        'pricePerDay': double.parse(toolPrice),
+        'description': toolDesc,                               // 🚀 Saved!
+        'pricePerDay': double.parse(toolPrice),                // (Keeping 'pricePerDay' key so existing code doesn't break)
+        'pricingType': _selectedPricing,                       // 🚀 Saved! (Per Day / Per Hour)
+        'securityDeposit': double.parse(toolDeposit),          // 🚀 Saved!
         'category': _selectedCategory,
-        'imageUrl': downloadUrl, // Save the link, not the file!
+        'imageUrl': downloadUrl,
         'ownerId': currentUser.uid,
-        'societyCode': societyCode, // Locks the tool to their community!
+        'societyCode': societyCode,
         'isAvailable': true,
         'createdAt': FieldValue.serverTimestamp(),
       });
@@ -112,7 +124,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
       // ✅ Success!
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Tool added successfully!'), backgroundColor: Colors.green));
-        Navigator.pop(context); // Send them back to the home screen
+        Navigator.pop(context);
       }
 
     } catch (e) {
@@ -122,10 +134,9 @@ class _AddItemScreenState extends State<AddItemScreen> {
     }
   }
 
-  // --- Helper Dialogs ---
   void _showError(String msg) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
 
-  void _showLoginDialog() {
+  void _showLoginDialog() { /* ... unchanged ... */
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -145,7 +156,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
     );
   }
 
-  void _showVerificationDialog() {
+  void _showVerificationDialog() { /* ... unchanged ... */
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -186,13 +197,65 @@ class _AddItemScreenState extends State<AddItemScreen> {
           ],
           const SizedBox(height: 24),
 
-          TextField(controller: _nameController, decoration: const InputDecoration(labelText: 'Tool Name', border: OutlineInputBorder())),
+          TextField(
+              controller: _nameController,
+              decoration: const InputDecoration(labelText: 'Tool Name', border: OutlineInputBorder())
+          ),
           const SizedBox(height: 16),
 
-          TextField(controller: _priceController, decoration: const InputDecoration(labelText: 'Price per day (₹)', border: OutlineInputBorder()), keyboardType: TextInputType.number),
+          // 🚀 NEW: Description Field
+          TextField(
+              controller: _descriptionController,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Description (Condition, what is included, rules)',
+                border: OutlineInputBorder(),
+                alignLabelWithHint: true,
+              )
+          ),
           const SizedBox(height: 16),
 
-          // 🛠️ Dropdown for Categories
+          // 🚀 NEW: Split Row for Price and Pricing Type
+          Row(
+            children: [
+              Expanded(
+                flex: 2,
+                child: TextField(
+                    controller: _priceController,
+                    decoration: const InputDecoration(labelText: 'Price (₹)', border: OutlineInputBorder()),
+                    keyboardType: TextInputType.number
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: DropdownButtonFormField<String>(
+                  value: _selectedPricing,
+                  decoration: const InputDecoration(labelText: 'Rate', border: OutlineInputBorder()),
+                  items: _pricingOptions.map((String option) {
+                    return DropdownMenuItem(value: option, child: Text(option));
+                  }).toList(),
+                  onChanged: (String? newValue) {
+                    if (newValue != null) setState(() => _selectedPricing = newValue);
+                  },
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // 🚀 NEW: Security Deposit
+          TextField(
+              controller: _depositController,
+              decoration: const InputDecoration(
+                  labelText: 'Refundable Security Deposit (₹)',
+                  border: OutlineInputBorder(),
+                  helperText: 'You can deduct from this if the tool is damaged.'
+              ),
+              keyboardType: TextInputType.number
+          ),
+          const SizedBox(height: 16),
+
           DropdownButtonFormField<String>(
             value: _selectedCategory,
             decoration: const InputDecoration(labelText: 'Category', border: OutlineInputBorder()),
@@ -217,6 +280,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
                   : const Text('Add Tool', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
             ),
           ),
+          const SizedBox(height: 40),
         ],
       ),
     );

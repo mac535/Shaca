@@ -25,27 +25,45 @@ class _KHomeScreenState extends State<KHomeScreen> {
   @override
   void initState() {
     super.initState();
-    _locationFuture = Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+    // 🚀 Safe location fetch prevents black screen crashes on boot
+    _locationFuture = _getSafeLocation();
     _refreshLocation();
   }
 
-  Future<void> _refreshLocation() async {
-    // 1. Grab where the phone is physically located right now
-    Position currentPos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-    final user = FirebaseAuth.instance.currentUser;
+  // 🛡️ THE SHIELD: Gracefully handles missing permissions
+  Future<Position> _getSafeLocation() async {
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) return Future.error('Location services are disabled.');
 
-    // 2. GUEST FLOW: Just update the local feed, don't save anything!
-    if (user == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Location updated! Showing tools near you."), backgroundColor: Colors.blue)
-        );
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        return Future.error('Location permissions are denied');
       }
-      return;
     }
 
-    // 3. LOGGED-IN MEMBER FLOW: The Security Cross-Check
+    if (permission == LocationPermission.deniedForever) {
+      return Future.error('Location permissions are permanently denied.');
+    }
+
+    return await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+  }
+
+  Future<void> _refreshLocation() async {
     try {
+      Position currentPos = await _getSafeLocation();
+      final user = FirebaseAuth.instance.currentUser;
+
+      if (user == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text("Location updated! Showing tools near you."), backgroundColor: Colors.blue)
+          );
+        }
+        return;
+      }
+
       DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
 
       if (userDoc.exists && userDoc.data() != null) {
@@ -66,7 +84,6 @@ class _KHomeScreenState extends State<KHomeScreen> {
                 const SnackBar(content: Text("Home verified! You are within 500m."), backgroundColor: Colors.green)
             );
           } else {
-            // 🚀 CHANGED: No longer says renting is disabled!
             ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text("You are away from home. Remote booking enabled!"), backgroundColor: Colors.orange)
             );
@@ -79,26 +96,14 @@ class _KHomeScreenState extends State<KHomeScreen> {
         }
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Failed to verify location cross-check."), backgroundColor: Colors.red));
-      }
+      debugPrint("Location verification skipped: $e");
     }
   }
 
   Future<void> _setHomeToCurrentLocation() async {
     setState(() => _isSettingHome = true);
     try {
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
-          _showToast("GPS permission is required to set your home base.");
-          setState(() => _isSettingHome = false);
-          return;
-        }
-      }
-
-      Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      Position position = await _getSafeLocation();
       final user = FirebaseAuth.instance.currentUser!;
 
       await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
@@ -108,7 +113,7 @@ class _KHomeScreenState extends State<KHomeScreen> {
 
       _showToast("Home base locked in successfully!");
     } catch (e) {
-      _showToast("Failed to get location. Make sure your GPS is turned on.");
+      _showToast("Failed to lock location. Please enable GPS and allow permissions.");
     } finally {
       if (mounted) setState(() => _isSettingHome = false);
     }
@@ -116,7 +121,6 @@ class _KHomeScreenState extends State<KHomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // 🎧 Wrap the entire Scaffold in a StreamBuilder for real-time auth updates
     return StreamBuilder<User?>(
         stream: FirebaseAuth.instance.authStateChanges(),
         builder: (context, authSnapshot) {
@@ -124,16 +128,67 @@ class _KHomeScreenState extends State<KHomeScreen> {
 
           return Scaffold(
             appBar: AppBar(
-              title: const Text('ShaCa Community', style: TextStyle(fontWeight: FontWeight.bold)),
+              titleSpacing: 16,
+              title: user == null
+                  ? const Text('ShaCa Community', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18))
+                  : StreamBuilder<DocumentSnapshot>(
+                stream: FirebaseFirestore.instance.collection('users').doc(user.uid).snapshots(),
+                builder: (context, snapshot) {
+                  String displayTitle = "ShaCa Community";
+
+                  if (snapshot.hasData && snapshot.data!.exists) {
+                    final userData = snapshot.data!.data() as Map<String, dynamic>;
+                    final communityName = userData['communityName'] ?? userData['societyName'] ?? '';
+                    final societyCode = userData['societyCode'] ?? '';
+
+                    if (communityName.toString().isNotEmpty) {
+                      displayTitle = communityName;
+                    } else if (societyCode.toString().isNotEmpty) {
+                      displayTitle = "Society: $societyCode";
+                    }
+                  }
+
+                  return Row(
+                    mainAxisSize: MainAxisSize.min, // 🛡️ Fixes RenderFlex overflow
+                    children: [
+                      const Icon(Icons.location_on, color: Color(0xFFFF8C00), size: 20),
+                      const SizedBox(width: 8),
+                      Flexible( // 🛡️ Fixes RenderFlex overflow
+                        child: Text(
+                          displayTitle,
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
               actions: [
                 if (user != null)
-                  IconButton(
-                      icon: const Icon(Icons.inbox),
-                      tooltip: 'Incoming Requests',
-                      onPressed: () {
-                        Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (_) => const OwnerDashboardScreen())
+                  StreamBuilder<QuerySnapshot>(
+                      stream: FirebaseFirestore.instance
+                          .collection('rentals')
+                          .where('lenderId', isEqualTo: user.uid)
+                          .where('status', isEqualTo: 'pending_verification')
+                          .snapshots(),
+                      builder: (context, snapshot) {
+                        bool hasPendingRequests = snapshot.hasData && snapshot.data!.docs.isNotEmpty;
+
+                        return IconButton(
+                            icon: Badge(
+                              isLabelVisible: hasPendingRequests,
+                              backgroundColor: Colors.red,
+                              smallSize: 10,
+                              child: const Icon(Icons.inbox),
+                            ),
+                            tooltip: 'Incoming Requests',
+                            onPressed: () {
+                              Navigator.push(
+                                  context,
+                                  MaterialPageRoute(builder: (_) => const OwnerDashboardScreen())
+                              );
+                            }
                         );
                       }
                   ),
@@ -144,7 +199,6 @@ class _KHomeScreenState extends State<KHomeScreen> {
             ),
             body: Column(
               children: [
-                // --- CATEGORY FILTER BAR ---
                 SizedBox(
                   height: 60,
                   child: ListView.builder(
@@ -169,8 +223,6 @@ class _KHomeScreenState extends State<KHomeScreen> {
                     },
                   ),
                 ),
-
-                // --- DYNAMIC CONTENT AREA ---
                 Expanded(child: _buildMainContent(user)),
               ],
             ),
@@ -180,19 +232,17 @@ class _KHomeScreenState extends State<KHomeScreen> {
   }
 
   Widget _buildMainContent(User? user) {
-    // 🛑 1. GUEST VIEW
     if (user == null) {
       return Column(
         children: [
           _buildInfoBanner("Browsing as Guest. Log in to rent tools nearby.", Icons.lock_open, "Log In", () {
             Navigator.push(context, MaterialPageRoute(builder: (context) => const LoginScreen()));
-          }),
+          }), // 🚀 THIS IS THE COMMA THAT FIXED IT!
           Expanded(child: _fetchAndBuildToolGrid(null)),
         ],
       );
     }
 
-    // 🎧 Listen to User Profile for Home Coordinates and Society Code
     return StreamBuilder<DocumentSnapshot>(
       stream: FirebaseFirestore.instance.collection('users').doc(user.uid).snapshots(),
       builder: (context, userSnapshot) {
@@ -205,7 +255,6 @@ class _KHomeScreenState extends State<KHomeScreen> {
         final homeLng = userData?['homeLng'];
         final societyCode = userData?['societyCode'] ?? '';
 
-        // 🛑 2. HAS NO HOME LOCATION
         if (homeLat == null || homeLng == null) {
           return Column(
             children: [
@@ -217,7 +266,6 @@ class _KHomeScreenState extends State<KHomeScreen> {
           );
         }
 
-        // 🛑 3. HAS HOME, BUT NO SOCIETY CODE
         if (societyCode.isEmpty) {
           return Column(
             children: [
@@ -232,7 +280,6 @@ class _KHomeScreenState extends State<KHomeScreen> {
           );
         }
 
-        // 🛰️ ALL DATA EXISTS: Check their physical GPS location!
         return FutureBuilder<Position>(
           future: _locationFuture,
           builder: (context, locSnapshot) {
@@ -248,7 +295,7 @@ class _KHomeScreenState extends State<KHomeScreen> {
             if (locSnapshot.hasError) {
               return Column(
                 children: [
-                  _buildInfoBanner("GPS Error. We cannot verify your location.", Icons.gps_off, "Retry", _refreshLocation),
+                  _buildInfoBanner("GPS Permission Needed.", Icons.gps_off, "Allow", _refreshLocation),
                   Expanded(child: _fetchAndBuildToolGrid(societyCode)),
                 ],
               );
@@ -259,18 +306,15 @@ class _KHomeScreenState extends State<KHomeScreen> {
                 currentPos.latitude, currentPos.longitude, homeLat, homeLng
             );
 
-            // 🛑 4. AWAY FROM HOME (> 500 meters)
             if (distanceInMeters > 500) {
               return Column(
                 children: [
-                  // 🚀 CHANGED: Removed "Renting is disabled". Now it just reminds them handovers are local.
                   _buildInfoBanner("You are away from home. Handovers must happen at the society.", Icons.directions_car, "Refresh GPS", _refreshLocation),
-                  Expanded(child: _fetchAndBuildToolGrid(societyCode)), // Grid is now fully interactive!
+                  Expanded(child: _fetchAndBuildToolGrid(societyCode)),
                 ],
               );
             }
 
-            // ✅ 5. FULLY VERIFIED & AT HOME!
             return _fetchAndBuildToolGrid(societyCode);
           },
         );
@@ -279,7 +323,6 @@ class _KHomeScreenState extends State<KHomeScreen> {
   }
 
   Widget _fetchAndBuildToolGrid(String? societyFilter) {
-    // 🚀 Show everything! The calendar will handle the dates.
     Query query = FirebaseFirestore.instance.collection('tools');
 
     if (societyFilter != null && societyFilter.isNotEmpty) {
@@ -329,6 +372,10 @@ class _KHomeScreenState extends State<KHomeScreen> {
   }
 
   Widget _buildToolCard(String toolId, Map<String, dynamic> tool) {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    bool isOwner = currentUser != null && tool['ownerId'] == currentUser.uid;
+    bool isAvailable = tool['isAvailable'] ?? true;
+
     return GestureDetector(
       onTap: () {
         Navigator.push(
@@ -356,6 +403,8 @@ class _KHomeScreenState extends State<KHomeScreen> {
                     child: Image.network(
                       tool['imageUrl'] ?? '',
                       fit: BoxFit.cover,
+                      color: isAvailable ? null : Colors.white.withOpacity(0.4),
+                      colorBlendMode: isAvailable ? null : BlendMode.lighten,
                       errorBuilder: (_, __, ___) => Container(
                           color: Colors.grey[200],
                           child: const Icon(Icons.image_not_supported, color: Colors.grey)),
@@ -368,62 +417,109 @@ class _KHomeScreenState extends State<KHomeScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(tool['name'] ?? 'Unknown',
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            color: isAvailable ? Colors.black : Colors.grey,
+                          ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis),
                       const SizedBox(height: 4),
                       Text(tool['category'] ?? '',
-                          style: const TextStyle(
-                              color: Color(0xFFFF8C00),
+                          style: TextStyle(
+                              color: isAvailable ? const Color(0xFFFF8C00) : Colors.grey,
                               fontSize: 12,
                               fontWeight: FontWeight.bold)),
                       const SizedBox(height: 8),
                       Text('₹${tool['pricePerDay']}/day',
-                          style: const TextStyle(fontSize: 14, color: Colors.black87)),
+                          style: TextStyle(fontSize: 14, color: isAvailable ? Colors.black87 : Colors.grey)),
                     ],
                   ),
                 ),
               ],
             ),
 
-            // 🛑 THE STATUS BADGE: Checks if it's currently with a borrower right now
-            StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('rentals')
-                  .where('toolId', isEqualTo: toolId)
-                  .where('status', isEqualTo: 'Active')
-                  .snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.hasData && snapshot.data!.docs.isNotEmpty) {
-                  DateTime now = DateTime.now();
-                  bool isCurrentlyBusy = snapshot.data!.docs.any((doc) {
-                    DateTime start = (doc['startDate'] as Timestamp).toDate();
-                    DateTime end = (doc['endDate'] as Timestamp).toDate();
-                    return now.isAfter(start.subtract(const Duration(days: 1))) &&
-                        now.isBefore(end.add(const Duration(days: 1)));
-                  });
+            if (!isAvailable)
+              Positioned(
+                top: 8,
+                left: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[800],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text(
+                    "UNAVAILABLE",
+                    style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
 
-                  if (isCurrentlyBusy) {
+            if (isOwner && isAvailable)
+              Positioned(
+                top: 8,
+                left: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withOpacity(0.9),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text(
+                    "OWNED",
+                    style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+
+            if (isAvailable)
+              StreamBuilder<QuerySnapshot>(
+                stream: FirebaseFirestore.instance
+                    .collection('rentals')
+                    .where('toolId', isEqualTo: toolId)
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  if (snapshot.hasError) return const SizedBox.shrink();
+                  if (snapshot.connectionState == ConnectionState.waiting) return const SizedBox.shrink();
+
+                  bool isRented = false;
+                  bool isBorrower = false;
+
+                  if (snapshot.hasData) {
+                    for (var doc in snapshot.data!.docs) {
+                      String status = doc['status'] ?? '';
+                      if (status == 'Active' || status == 'paid_pending_pickup') {
+                        isRented = true;
+                        if (currentUser != null && doc['borrowerId'] == currentUser.uid) {
+                          isBorrower = true;
+                        }
+                        break;
+                      }
+                    }
+                  }
+
+                  if (isRented) {
                     return Positioned(
                       top: 8,
                       right: 8,
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
-                          color: Colors.red.withOpacity(0.9),
+                          color: isBorrower ? Colors.blue.withOpacity(0.9) : Colors.red.withOpacity(0.9),
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: const Text(
-                          "RENTED",
-                          style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                        child: Text(
+                          isBorrower ? "BORROWED" : "RENTED",
+                          style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
                         ),
                       ),
                     );
                   }
-                }
-                return const SizedBox.shrink();
-              },
-            ),
+
+                  return const SizedBox.shrink();
+                },
+              ),
           ],
         ),
       ),
