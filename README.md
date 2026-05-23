@@ -12,17 +12,12 @@ Borrowing tools from neighbours is common but awkward — no trust system, no ac
 
 Shaca creates a hyperlocal gated community (1km radius) where only verified neighbours can rent or lend tools — with built-in trust scoring, live verification, and secure payments.
 
----
-
-## Screenshots
-
-> Coming soon / add 4–5 screenshots here
 
 ---
 
 ## Demo
 
-> [Watch demo video](#) ← replace with actual link
+> [https://drive.google.com/file/d/10L714J5DQu3aWw2qOXShRNyFKjmChdx5/view?usp=sharing](#)
 
 ---
 
