@@ -2,8 +2,6 @@
 
 A Flutter app that lets neighbours rent and lend tools within a trusted local community.
 
-> Built solo as a final year project at CUSAT.
-
 ---
 
 ## The Problem
